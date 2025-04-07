@@ -159,8 +159,7 @@ void prompt(char cmd[], size_t size) {
  ***********************************************/
 
 void init_history() {
-  cmd_history.count = 0;
-  cmd_history.current_index = -1;
+  cmd_history = (History){.count = 0, .current_index = -1};
   memset(cmd_history.history, 0, sizeof(cmd_history.history));
 
   FILE *history_file = fopen("history.txt", "r");
@@ -614,7 +613,7 @@ void tree(const char *cwd, size_t level) {
     printf("├── %s", name);
     if (direntp->d_type == DT_DIR) {
       printf("/\n");
-      if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+      if (strncmp(name, ".", 1) == 0) {
         continue;
       }
 
