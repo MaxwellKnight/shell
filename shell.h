@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdlib.h>
+#include <termios.h>
 #define MAX_ARGS 20
 #define INPUT_LEN 256
 #define HISTORY_LEN 100
@@ -19,11 +20,12 @@ typedef struct Command {
 
 typedef struct History {
   char *history[HISTORY_LEN];
-  int start;
   int count;
-  int index;
+  int current_index;
 } History;
 
+// History
+void init_history();
 Command *create_command();
 Command *parse_pipeline(char *src);
 Command *parse_redirect(char *src);
@@ -49,6 +51,16 @@ void change_dir(const Command *cmd);
 void history_add(const char *cmd);
 void history_display();
 char *read_last_line_from_fd(int fd);
+// Terminal
+void enable_raw_mode(struct termios *orig_termios);
+void disable_raw_mode(const struct termios *orig_termios);
+void clear_current_line(size_t length);
+size_t handle_arrow_key(char *buffer, size_t buffer_size,
+                        size_t current_length);
+
+// Reads a line of input with editing and history support
+void read_line(char *buffer, size_t size);
 
 // ============== Memory ============== //
 void free_commands(Command **head);
+void free_history();

@@ -6,9 +6,79 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <unistd.h>
 
 extern char **environ;
+History cmd_history = {0};
+
+void enable_raw_mode(struct termios *orig_termios) {
+  struct termios raw;
+  tcgetattr(STDIN_FILENO, orig_termios);
+  raw = *orig_termios;
+
+  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+  raw.c_cflag |= (CS8);
+  raw.c_oflag &= ~(OPOST);
+
+  raw.c_cc[VMIN] = 0;
+  raw.c_cc[VTIME] = 1;
+
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void disable_raw_mode(const struct termios *orig_termios) {
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, orig_termios);
+}
+
+void init_history() {
+  cmd_history.count = 0;
+  cmd_history.current_index = -1;
+  memset(cmd_history.history, 0, sizeof(cmd_history.history));
+
+  FILE *history_file = fopen("history.txt", "r");
+  if (!history_file) {
+    return;
+  }
+
+  int line_count = 0;
+  char buffer[INPUT_LEN];
+  while (fgets(buffer, INPUT_LEN, history_file) && line_count < HISTORY_LEN) {
+    line_count++;
+  }
+
+  rewind(history_file);
+
+  char **lines = (char **)malloc(line_count * sizeof(char *));
+  if (!lines) {
+    fclose(history_file);
+    return;
+  }
+
+  int actual_lines = 0;
+  while (actual_lines < line_count && fgets(buffer, INPUT_LEN, history_file)) {
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+      buffer[len - 1] = '\0';
+    }
+
+    char *tab_pos = strchr(buffer, '\t');
+    if (tab_pos) {
+      lines[actual_lines++] = strdup(tab_pos + 1);
+    }
+  }
+
+  fclose(history_file);
+
+  int history_index = 0;
+  for (int i = actual_lines - 1; i >= 0 && history_index < HISTORY_LEN; i--) {
+    cmd_history.history[history_index++] = lines[i];
+  }
+
+  cmd_history.count = history_index;
+  free(lines);
+}
 
 Command *create_command() {
   Command *cmd = (Command *)malloc(sizeof(Command));
@@ -321,6 +391,30 @@ void history_display() {
 }
 
 void history_add(const char *cmd) {
+  if (strlen(cmd) == 0) {
+    return;
+  }
+
+  if (cmd_history.count > 0 && strcmp(cmd_history.history[0], cmd) == 0) {
+    return;
+  }
+
+  for (int i = HISTORY_LEN - 1; i > 0; i--) {
+    if (cmd_history.history[i - 1]) {
+      free(cmd_history.history[i]);
+      cmd_history.history[i] = strdup(cmd_history.history[i - 1]);
+    }
+  }
+
+  free(cmd_history.history[0]);
+  cmd_history.history[0] = strdup(cmd);
+
+  if (cmd_history.count < HISTORY_LEN) {
+    cmd_history.count++;
+  }
+
+  cmd_history.current_index = -1;
+
   int read_fd = open("history.txt", O_RDONLY);
   size_t line_id = 0;
   char *last = NULL;
@@ -449,21 +543,93 @@ void free_commands(Command **head) {
   }
 }
 
+void clear_current_line(size_t length) {
+  for (size_t j = 0; j < length; j++) {
+    printf("\b \b");
+  }
+  fflush(stdout);
+}
+
+size_t handle_arrow_key(char *buffer, size_t buffer_size,
+                        size_t current_length) {
+  char seq[2];
+  if (read(STDIN_FILENO, &seq[0], 1) != 1)
+    return current_length;
+  if (read(STDIN_FILENO, &seq[1], 1) != 1)
+    return current_length;
+
+  if (seq[0] == '[') {
+    if (seq[1] == 'A') { // Up arrow
+      if (cmd_history.current_index < cmd_history.count - 1) {
+        cmd_history.current_index++;
+        if (cmd_history.history[cmd_history.current_index]) {
+          clear_current_line(current_length);
+          strncpy(buffer, cmd_history.history[cmd_history.current_index],
+                  buffer_size - 1);
+          buffer[buffer_size - 1] = '\0';
+          printf("%s", buffer);
+          fflush(stdout);
+          return strlen(buffer);
+        }
+      }
+    } else if (seq[1] == 'B') { // Down arrow
+      if (cmd_history.current_index > 0) {
+        cmd_history.current_index--;
+        clear_current_line(current_length);
+        strncpy(buffer, cmd_history.history[cmd_history.current_index],
+                buffer_size - 1);
+        buffer[buffer_size - 1] = '\0';
+        printf("%s", buffer);
+        fflush(stdout);
+        return strlen(buffer);
+      } else if (cmd_history.current_index == 0) {
+        cmd_history.current_index = -1;
+        clear_current_line(current_length);
+        buffer[0] = '\0';
+        fflush(stdout);
+        return 0;
+      }
+    }
+  }
+
+  return current_length;
+}
+
 void read_line(char *buffer, size_t size) {
+  memset(buffer, 0, size);
+  struct termios orig_termios;
+  enable_raw_mode(&orig_termios);
+
   size_t i = 0;
   char c;
 
-  memset(buffer, 0, size);
   while (i < size - 1) {
-    c = getchar();
+    ssize_t nread = read(STDIN_FILENO, &c, 1);
+    if (nread <= 0)
+      continue;
 
-    buffer[i++] = c;
-    if (c == EOF || c == '\n' || c == '\r') {
+    if (c == '\n' || c == '\r') {
+      buffer[i] = '\0';
       break;
+    } else if (c == 127 || c == '\b') {
+      if (i > 0) {
+        i--;
+        buffer[i] = '\0';
+        printf("\b \b");
+      }
+    } else if (c == 27) {
+      i = handle_arrow_key(buffer, size, i);
+    } else if (c >= 32 && c <= 126) {
+      buffer[i++] = c;
+      buffer[i] = '\0';
+      putchar(c);
     }
-    buffer[i] = '\0';
+
     fflush(stdout);
   }
+
+  disable_raw_mode(&orig_termios);
+  printf("\n");
 }
 
 void prompt(char cmd[], size_t size) {
@@ -489,4 +655,10 @@ void prompt(char cmd[], size_t size) {
   printf("%s%s|>%s ", BOLD, CYAN, RESET);
   fflush(stdout);
   read_line(cmd, size);
+}
+
+void free_history() {
+  for (int i = 0; i < cmd_history.count; i++) {
+    free(cmd_history.history[i]);
+  }
 }

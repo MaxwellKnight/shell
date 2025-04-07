@@ -1,0 +1,27 @@
+0	ls
+1	cat history.txt
+2	cat shell.h
+3	cat < main.c | grep a
+4	history
+5	exit
+6	ls -l
+7	exit
+8	cat shell.h
+9	history
+10	cat history.txt
+11	exit
+12	ls
+13	exit
+14	exit
+15	ls -l
+16	cat < main.c
+17	cat history.txt
+18	ls -l
+19	exit
+20	ls
+21	ls -l
+22	exit
+23	ls -l
+24	cat < main.c | grep main | wc
+25	ls -l
+26	exit
