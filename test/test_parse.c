@@ -1,4 +1,4 @@
-#include "../include/shell.h"
+#include "shell.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
